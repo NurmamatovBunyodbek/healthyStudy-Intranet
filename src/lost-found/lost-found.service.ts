@@ -710,23 +710,32 @@ export class LostFoundService {
       this.configService.get<number>('lostFoundArchiveDays') || 45;
     const cutoff = new Date(Date.now() - archiveDays * 24 * 60 * 60 * 1000);
 
-    const res = await this.itemRepo
-      .createQueryBuilder()
-      .update(LostFoundItemEntity)
-      .set({
-        status: 'archived',
-        archived_at: () => 'CURRENT_TIMESTAMP',
-      })
-      .where('status = :status', { status: 'open' })
-      .andWhere('created_at < :cutoff', { cutoff })
-      .execute();
+    try {
+      const res = await this.itemRepo
+        .createQueryBuilder()
+        .update(LostFoundItemEntity)
+        .set({
+          status: 'archived',
+          archived_at: () => 'CURRENT_TIMESTAMP',
+        })
+        .where('status = :status', { status: 'open' })
+        .andWhere('created_at < :cutoff', { cutoff })
+        .execute();
 
-    if ((res.affected || 0) > 0) {
-      this.logger.log(
-        `Auto-archived ${res.affected} stale Lost & Found items older than ${archiveDays} days`,
+      if ((res.affected || 0) > 0) {
+        this.logger.log(
+          `Auto-archived ${res.affected} stale Lost & Found items older than ${archiveDays} days`,
+        );
+      }
+      return res.affected || 0;
+    } catch (err) {
+      this.logger.error(
+        `Failed to auto-archive stale Lost & Found items: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
       );
+      return 0;
     }
-    return res.affected || 0;
   }
 
   private resolveOrgId(

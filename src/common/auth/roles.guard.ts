@@ -3,17 +3,22 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  Optional,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { MainBackendService } from '../services/main-backend.service';
 import { IntranetActor } from './auth.types';
 import { ROLES_METADATA_KEY } from './decorators';
 import { isActorAdminForOrg } from './intranet-auth.guard';
 
 @Injectable()
 export class IntranetRolesGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector) {}
+  constructor(
+    private readonly reflector: Reflector,
+    @Optional() private readonly mainBackendService?: MainBackendService,
+  ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const requiredRoles = this.reflector.getAllAndOverride<string[]>(
       ROLES_METADATA_KEY,
       [context.getHandler(), context.getClass()],
@@ -47,6 +52,16 @@ export class IntranetRolesGuard implements CanActivate {
 
     if (isActorAdminForOrg(actor, targetOrgId || undefined)) {
       return true;
+    }
+
+    if (targetOrgId && this.mainBackendService) {
+      const isMainBackendAdmin = await this.mainBackendService.isAdminForOrganization(
+        actor,
+        targetOrgId,
+      );
+      if (isMainBackendAdmin) {
+        return true;
+      }
     }
 
     // For item-level moderation routes (`PATCH /lost-found/:id/return`), org ownership is validated in service

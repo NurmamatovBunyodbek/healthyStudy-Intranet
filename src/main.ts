@@ -62,20 +62,21 @@ async function bootstrap() {
     }),
   );
 
-  const swaggerEnabled =
-    configService.get<string>('SWAGGER_ENABLED', 'true').toLowerCase() !==
-    'false';
+  const swaggerEnabled = configService.get<boolean>('swaggerEnabled', true);
   if (swaggerEnabled) {
-    const swaggerConfig = new DocumentBuilder()
+    const publicBasePath = configService.get<string>('publicBasePath', '');
+    const builder = new DocumentBuilder()
       .setTitle('HealthyStudy Intranet Microservice')
       .setDescription(
         'Reusable Intranet REST API (Weather, Lost & Found, Media Upload Auth)',
       )
       .setVersion('1.1')
       .addBearerAuth()
-      .addApiKey({ type: 'apiKey', in: 'header', name: 'x-api-key' }, 'x-api-key')
-      .build();
-    const document = SwaggerModule.createDocument(app, swaggerConfig);
+      .addApiKey({ type: 'apiKey', in: 'header', name: 'x-api-key' }, 'x-api-key');
+    if (publicBasePath) {
+      builder.addServer(publicBasePath);
+    }
+    const document = SwaggerModule.createDocument(app, builder.build());
     SwaggerModule.setup('docs', app, document);
   }
 

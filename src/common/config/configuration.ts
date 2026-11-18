@@ -2,6 +2,7 @@ export interface IntranetAppConfig {
   port: number;
   nodeEnv: string;
   swaggerEnabled: boolean;
+  publicBasePath: string;
   database: {
     url?: string;
     host: string;
@@ -11,6 +12,8 @@ export interface IntranetAppConfig {
     pass: string;
     synchronize: boolean;
     autoCreate: boolean;
+    migrationsRun: boolean;
+    ssl: boolean;
   };
   jwt: {
     secret: string;
@@ -66,14 +69,25 @@ export function parseExternalApiKeys(raw?: string): Map<string, string> {
 export const intranetConfiguration = (): IntranetAppConfig => {
   const nodeEnv = process.env.NODE_ENV || 'development';
   const defaultArchiveDays = Number(process.env.LOST_FOUND_ARCHIVE_DAYS || '45');
+  const dbUrl = process.env.DATABASE_URL?.trim() || undefined;
+  const swaggerEnabled =
+    process.env.SWAGGER_ENABLED !== undefined
+      ? process.env.SWAGGER_ENABLED.toLowerCase() !== 'false'
+      : nodeEnv !== 'production';
+  const ssl =
+    process.env.DB_SSL !== undefined
+      ? process.env.DB_SSL === 'true'
+      : Boolean(dbUrl && /sslmode=(require|verify-full|verify-ca)/i.test(dbUrl));
 
   return {
     port: parseInt(process.env.PORT || '3004', 10) || 3004,
     nodeEnv,
-    swaggerEnabled:
-      (process.env.SWAGGER_ENABLED || 'true').toLowerCase() !== 'false',
+    swaggerEnabled,
+    publicBasePath: (process.env.PUBLIC_BASE_PATH || '')
+      .trim()
+      .replace(/\/+$/, ''),
     database: {
-      url: process.env.DATABASE_URL?.trim() || undefined,
+      url: dbUrl,
       host: process.env.DB_HOST || 'localhost',
       port: parseInt(process.env.DB_PORT || '5432', 10) || 5432,
       name: process.env.DB_NAME || 'healthystudy_intranet_db',
@@ -87,6 +101,11 @@ export const intranetConfiguration = (): IntranetAppConfig => {
         process.env.DB_AUTO_CREATE !== undefined
           ? process.env.DB_AUTO_CREATE === 'true'
           : nodeEnv !== 'production',
+      migrationsRun:
+        process.env.DB_RUN_MIGRATIONS !== undefined
+          ? process.env.DB_RUN_MIGRATIONS === 'true'
+          : true,
+      ssl,
     },
     jwt: {
       secret:

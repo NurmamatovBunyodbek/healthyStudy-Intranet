@@ -49,6 +49,27 @@ pnpm test
 pnpm run build
 ```
 
+## PM2 Production Deployment (Contabo VPS)
+
+```bash
+cp .env.production.example .env
+# Fill in production PostgreSQL password, JWT_SECRET, INTERNAL_SERVICE_SECRET, and ImageKit keys
+chmod +x scripts/deploy-pm2.sh
+./scripts/deploy-pm2.sh
+```
+
+Or manually:
+
+```bash
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm run build
+pnpm run migration:run
+pm2 start ecosystem.config.js
+pm2 save
+```
+
+> Keep `instances: 1` in `ecosystem.config.js` so the daily `@Cron('0 3 * * *')` archive job and in-memory Weather/Role caches remain consistent across requests.
+
 ## Docker Deployment
 
 ```bash

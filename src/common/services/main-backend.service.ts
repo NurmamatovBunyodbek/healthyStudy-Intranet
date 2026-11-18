@@ -11,6 +11,7 @@ interface CachedEntry<T> {
 const FEATURE_CACHE_TTL_MS = 2 * 60 * 1000;
 const ROLE_CACHE_TTL_MS = 60 * 1000;
 const ORG_CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_CACHE_ENTRIES = 1000;
 const STAFF_ADMIN_ROLES = new Set([
   'superadmin',
   'owner',
@@ -18,6 +19,63 @@ const STAFF_ADMIN_ROLES = new Set([
   'director',
   'manager',
 ]);
+
+/**
+ * Normalizes staff role keys from either legacy flat arrays/objects or
+ * HealthyStudy Main Backend's `{ branches: [{ roles: [{ roleKey }] }] }` payload.
+ */
+export function extractRoleKeysFromStaffRolesResponse(data: unknown): string[] {
+  if (Array.isArray(data)) {
+    return data.map((r) => String(r || '').trim()).filter(Boolean);
+  }
+  if (!data || typeof data !== 'object') {
+    return [];
+  }
+
+  const obj = data as {
+    roleKeys?: unknown;
+    roles?: unknown;
+    branches?: unknown;
+  };
+
+  const collected: string[] = [];
+  const collectRoleEntry = (entry: unknown) => {
+    if (typeof entry === 'string') {
+      const clean = entry.trim();
+      if (clean) collected.push(clean);
+      return;
+    }
+    if (entry && typeof entry === 'object') {
+      const rec = entry as {
+        roleKey?: unknown;
+        key?: unknown;
+        role?: { key?: unknown };
+      };
+      const raw = rec.roleKey ?? rec.key ?? rec.role?.key;
+      const clean = String(raw || '').trim();
+      if (clean) collected.push(clean);
+    }
+  };
+
+  if (Array.isArray(obj.roleKeys)) {
+    obj.roleKeys.forEach(collectRoleEntry);
+  }
+  if (Array.isArray(obj.roles)) {
+    obj.roles.forEach(collectRoleEntry);
+  }
+  if (Array.isArray(obj.branches)) {
+    for (const branch of obj.branches) {
+      if (branch && typeof branch === 'object') {
+        const branchRoles = (branch as { roles?: unknown }).roles;
+        if (Array.isArray(branchRoles)) {
+          branchRoles.forEach(collectRoleEntry);
+        }
+      }
+    }
+  }
+
+  return collected;
+}
 
 export interface OrgSummarySnapshot {
   id: string;
@@ -33,6 +91,29 @@ export class MainBackendService {
   private readonly orgCache = new Map<string, CachedEntry<OrgSummarySnapshot | null>>();
 
   constructor(private readonly configService: ConfigService) {}
+
+  private setBoundedCache<T>(
+    cache: Map<string, CachedEntry<T>>,
+    key: string,
+    value: T,
+    ttlMs: number,
+  ): void {
+    const now = Date.now();
+    if (cache.size >= MAX_CACHE_ENTRIES && !cache.has(key)) {
+      for (const [k, entry] of cache.entries()) {
+        if (entry.expiresAt <= now) {
+          cache.delete(k);
+        }
+      }
+      if (cache.size >= MAX_CACHE_ENTRIES) {
+        const oldestKey = cache.keys().next().value;
+        if (oldestKey !== undefined) {
+          cache.delete(oldestKey);
+        }
+      }
+    }
+    cache.set(key, { value, expiresAt: now + ttlMs });
+  }
 
   private get baseUrl(): string {
     return (
@@ -100,10 +181,12 @@ export class MainBackendService {
       };
       const rawFlag = json?.features?.intranet_lost_found;
       const enabled = rawFlag !== false;
-      this.featureCache.set(organizationId, {
-        value: enabled,
-        expiresAt: now + FEATURE_CACHE_TTL_MS,
-      });
+      this.setBoundedCache(
+        this.featureCache,
+        organizationId,
+        enabled,
+        FEATURE_CACHE_TTL_MS,
+      );
       return enabled;
     } catch (err) {
       this.logger.debug(
@@ -153,22 +236,23 @@ export class MainBackendService {
       }
       const data = (await res.json()) as
         | string[]
-        | { roleKeys?: string[]; roles?: string[]; isOwner?: boolean };
-      const roleList = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.roleKeys)
-          ? data.roleKeys
-          : Array.isArray(data?.roles)
-            ? data.roles
-            : [];
+        | {
+            roleKeys?: string[];
+            roles?: Array<string | { roleKey?: string }>;
+            branches?: Array<{ roles?: Array<string | { roleKey?: string }> }>;
+            isOwner?: boolean;
+          };
+      const roleList = extractRoleKeysFromStaffRolesResponse(data);
       const isAdmin =
         Boolean(!Array.isArray(data) && data?.isOwner) ||
-        roleList.some((r) => STAFF_ADMIN_ROLES.has(String(r).toLowerCase()));
+        roleList.some((r) => STAFF_ADMIN_ROLES.has(r.toLowerCase()));
 
-      this.adminRoleCache.set(cacheKey, {
-        value: isAdmin,
-        expiresAt: now + ROLE_CACHE_TTL_MS,
-      });
+      this.setBoundedCache(
+        this.adminRoleCache,
+        cacheKey,
+        isAdmin,
+        ROLE_CACHE_TTL_MS,
+      );
       return isAdmin;
     } catch (err) {
       this.logger.debug(
@@ -209,10 +293,7 @@ export class MainBackendService {
             username: org.username ? String(org.username) : clean,
           }
         : null;
-      this.orgCache.set(clean, {
-        value: snapshot,
-        expiresAt: now + ORG_CACHE_TTL_MS,
-      });
+      this.setBoundedCache(this.orgCache, clean, snapshot, ORG_CACHE_TTL_MS);
       return snapshot;
     } catch {
       return null;

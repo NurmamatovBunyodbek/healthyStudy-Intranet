@@ -1,58 +1,7 @@
-import { Logger, Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { Client } from 'pg';
-import { LostFoundClaimEntity } from './entities/lost-found-claim.entity';
-import { LostFoundItemEntity } from './entities/lost-found-item.entity';
-
-const SAFE_PG_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-
-async function ensureDatabaseExists(opts: {
-  url?: string;
-  host: string;
-  port: number;
-  name: string;
-  user: string;
-  pass: string;
-  autoCreate: boolean;
-}): Promise<void> {
-  if (!opts.autoCreate || opts.url) {
-    return;
-  }
-  if (!SAFE_PG_IDENTIFIER.test(opts.name)) {
-    throw new Error(`Unsafe PostgreSQL database name: ${opts.name}`);
-  }
-
-  const logger = new Logger('DatabaseBootstrap');
-  const client = new Client({
-    host: opts.host,
-    port: opts.port,
-    user: opts.user,
-    password: opts.pass,
-    database: 'postgres',
-    connectionTimeoutMillis: 4000,
-  });
-
-  try {
-    await client.connect();
-    const check = await client.query(
-      'SELECT 1 FROM pg_database WHERE datname = $1',
-      [opts.name],
-    );
-    if (check.rowCount === 0) {
-      await client.query(`CREATE DATABASE "${opts.name}"`);
-      logger.log(`Created missing PostgreSQL database "${opts.name}"`);
-    }
-  } catch (err) {
-    logger.debug(
-      `Skipped auto-creating database "${opts.name}": ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  } finally {
-    await client.end().catch(() => undefined);
-  }
-}
+import { buildTypeOrmOptions, ensureDatabaseExists } from './data-source';
 
 @Module({
   imports: [
@@ -71,12 +20,17 @@ async function ensureDatabaseExists(opts: {
         const pass = configService.get<string>('database.pass', 'root');
         const synchronize = configService.get<boolean>(
           'database.synchronize',
-          true,
+          false,
         );
         const autoCreate = configService.get<boolean>(
           'database.autoCreate',
+          false,
+        );
+        const migrationsRun = configService.get<boolean>(
+          'database.migrationsRun',
           true,
         );
+        const ssl = configService.get<boolean>('database.ssl', false);
         const nodeEnv = configService.get<string>('nodeEnv', 'development');
 
         await ensureDatabaseExists({
@@ -87,37 +41,21 @@ async function ensureDatabaseExists(opts: {
           user,
           pass,
           autoCreate,
+          ssl,
         });
 
-        const baseOptions = {
-          type: 'postgres' as const,
+        return buildTypeOrmOptions({
+          url: dbUrl,
+          host,
+          port,
+          name,
+          user,
+          pass,
           synchronize,
-          entities: [LostFoundItemEntity, LostFoundClaimEntity],
-          ssl:
-            nodeEnv === 'production' && dbUrl
-              ? { rejectUnauthorized: false }
-              : false,
-          extra: {
-            max: 15,
-            idleTimeoutMillis: 30000,
-            connectionTimeoutMillis: 5000,
-          },
-          logging:
-            nodeEnv === 'development'
-              ? (['error', 'warn'] as ('error' | 'warn')[])
-              : false,
-        };
-
-        return dbUrl
-          ? { ...baseOptions, url: dbUrl }
-          : {
-              ...baseOptions,
-              host,
-              port,
-              database: name,
-              username: user,
-              password: pass,
-            };
+          migrationsRun,
+          ssl,
+          nodeEnv,
+        });
       },
     }),
   ],
