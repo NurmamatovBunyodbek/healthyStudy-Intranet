@@ -1,0 +1,58 @@
+services:
+  intranet-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    image: healthystudy-intranet-service:latest
+    container_name: healthystudy-intranet-service
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${PORT:-3004}:${PORT:-3004}"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: ${PORT:-3004}
+      NODE_OPTIONS: "--max-old-space-size=384"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const p=process.env.PORT||3004;fetch('http://127.0.0.1:'+p+'/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - intranet-net
+
+networks:
+  intranet-net:
+    driver: bridge
